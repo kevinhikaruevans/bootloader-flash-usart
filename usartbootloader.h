@@ -5,6 +5,7 @@
 #define DEVICE_RESET_WAIT_MS 100
 #define DEVICE_BOOTLOADER_COMMANDS_LENGTH 11
 #include "mbed.h"
+#include "EventQueue2.h"
 //#include <map>
 #include "Log2.h"
 
@@ -61,7 +62,7 @@ private:
 
     int lastCommandSent;
     Thread eventThread;
-    EventQueue queue;
+    EventQueue2 queue;
     mbed::DigitalOut boot0;
     mbed::DigitalInOut nrst;
     mbed::UARTSerial usart;
@@ -79,7 +80,6 @@ private:
 
     int resetCount;
 
-    int estQueuedItems;
 
     void sendCallback(const BootloaderCompletionStatus status, const char* message) {
         if (this->cbComplete) {
@@ -118,8 +118,7 @@ private:
 
 public:
     USARTBootloader(PinName _boot0, PinName _nrst, PinName _tx, PinName _rx)
-        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE), boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE), resetCount(0),
-        estQueuedItems(0)
+        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE), boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE), resetCount(0)
           
     {
         logger.write("Initializing...");
@@ -214,7 +213,6 @@ public:
         
         if (current_events & POLLIN) {
             // https://github.com/ARMmbed/mbed-os/blob/master/drivers/UARTSerial.cpp#L126
-            estQueuedItems++;
             queue.call(callback(this, &USARTBootloader::handleQueueEvent));
         }
     }
@@ -224,6 +222,7 @@ public:
         uint8_t cmd = usart_getc(size);
 
         if (cmd == 0x00 || cmd == 0xC0 || this->resetCount == 0 || cmd == 0xFF) {
+
             // usually a parity bit error, but the underlying class doesn't detect it
             logger.write("invalid packet (%X)", cmd);
             /*
@@ -244,12 +243,13 @@ public:
                 break;
             default:
                 logger.write("<!> invalid command: %x", cmd);
+                
+                if (!queue.has_next() && (this->usart.poll(0) & 1)) {
+                    logger.write("\t-> there seems to be more in the rxfifo and an empty equeue");
+                    logger.write("\t\t-> will re-enqueue another check");
+                    queue.call(callback(this, &USARTBootloader::handleQueueEvent));
+                }
                 break;
-        }
-        
-        if (--estQueuedItems == 0 && (this->usart.poll(0) & 1)) {
-
-            queue.call(callback(this, &USARTBootloader::handleQueueEvent));
         }
     }
 
@@ -287,7 +287,12 @@ public:
             // first ACK
             case NoLastCommand: {
                 logger.write("\tnext command = get version (0x00)");
-                usart_writeBootloaderCommand(Get);
+
+                if (resetCount > 1) {
+                    logger.write("\thalting until I get this figured out");
+                } else {
+                    usart_writeBootloaderCommand(Get);
+                }
             }
             break;
 
