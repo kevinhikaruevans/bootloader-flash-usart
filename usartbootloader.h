@@ -2,7 +2,7 @@
 #define USARTBOOTLOADER_H
 
 #define USART_BAUDRATE 19200
-#define DEVICE_RESET_WAIT_MS 100
+#define DEVICE_RESET_WAIT_MS 200
 #define DEVICE_BOOTLOADER_COMMANDS_LENGTH 11
 #include "mbed.h"
 #include "EventQueue2.h"
@@ -13,8 +13,7 @@ typedef enum BootloaderCommand_t {
     NoLastCommand = -1,
     MagicKey = 0x7F,
     ACK = 0x79,
-    NACK = 0x1F,
-    MagicGet = 0x00
+    NACK = 0x1F
 } BootloaderCommand;
 
 typedef enum BootloaderCommandIndex_t {
@@ -92,6 +91,8 @@ private:
         }
     }
     void initializeCommandHandlers() {
+        commandMap[Get] = 0x00; // the value is ALWAYS 0x00 for the Get command
+
         commandHandlers[Get] = &USARTBootloader::handleGet;
         commandHandlers[GetVersionAndRPS] = &USARTBootloader::handleGetVersionAndRPS;
         commandHandlers[GetID] = &USARTBootloader::handleGetID;
@@ -118,10 +119,12 @@ private:
 
 public:
     USARTBootloader(PinName _boot0, PinName _nrst, PinName _tx, PinName _rx)
-        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE), boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE), resetCount(0)
+        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE),
+        boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE),
+        resetCount(0)
           
     {
-        logger.write("Initializing...");
+        logger.newline().write("initializing...");
         initializeCommandHandlers();
         /*
          * The format is 8 bits, even parity, and stop=1
@@ -129,7 +132,6 @@ public:
          */
         usart.set_format(8, UARTSerial::Even, 1);
         usart.set_blocking(true);
-        usart.enable_input(false);
         usart.sigio(callback(this, &USARTBootloader::handleIOEvent));
 
         this->eventThread.start(
@@ -170,10 +172,7 @@ public:
 
         if (this->resetSlave()) {
             logger.write("reset=OK, starting bootloader sequence");
-            usart.set_blocking(false);
             this->usart_putc(MagicKey);
-            usart.enable_input(true);
-            usart.set_blocking(true);
             logger.write("should be within bootloader now");
         } else {
             logger.write("reset=fail");
@@ -296,40 +295,13 @@ public:
             }
             break;
 
-            case MagicGet: {
-                logger.write("\treceived Get!");
-                size_t r;
-                uint8_t commandsLength = this->usart_getc(r);
-                uint8_t version = this->usart_getc(r);
-
-                logger.write("\tbootloader version = %x", version);
-
-                //TODO check bootloader version
-
-                if (commandsLength != DEVICE_BOOTLOADER_COMMANDS_LENGTH) {
-                    logger.write(
-                        "\t<!> unepxected number of commands available: got %d should be %d",
-                        commandsLength,
-                        DEVICE_BOOTLOADER_COMMANDS_LENGTH
-                    );
-                    return;
-                }
-                this->usart.read(this->commandMap, DEVICE_BOOTLOADER_COMMANDS_LENGTH);
-                uint8_t ack2 = this->usart_getc(r);
-                if (ack2 != ACK) {
-                    logger.write("\t<!> second ack is invalid for get!");
-                    return;
-                }
-                usart_writeBootloaderCommand(GetVersionAndRPS);
-            }
-            break;
-
             default: {
                 uint8_t* commandMapPtr = std::find(
                     commandMap,
                     commandMap + DEVICE_BOOTLOADER_COMMANDS_LENGTH,
                     lastCommandSent
                 );
+
                 if (commandMapPtr == commandMap + DEVICE_BOOTLOADER_COMMANDS_LENGTH) {
                     logger.write("<!> no handler found for command %x!", lastCommandSent);
                 } else {

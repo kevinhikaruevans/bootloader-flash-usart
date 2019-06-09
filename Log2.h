@@ -8,11 +8,17 @@
 
 #define STRING_STACK_LIMIT    120
 
+/**
+ * An extension of RawSerial, to include a vprintf function.
+ * NOTE: while the current stable mbed does not contain this
+ * function, it is included in the current git master of mbed
+ */
 class RawSerial2 : public RawSerial {
 public:
     RawSerial2(PinName tx, PinName rx)
         : RawSerial(tx, rx)
     { }
+
     int vprintf(const char *format, std::va_list arg)
     {
         lock();
@@ -35,6 +41,13 @@ public:
     }
 };
 
+/**
+ * A kinda shitty logging class with a mutex
+ * 
+ * @example
+ *      Log2 log("MyComponent");
+ *      log.write("test");
+ */
 class Log2 {
 public:
     Log2(const char* _tag)
@@ -43,7 +56,8 @@ public:
     Log2(const char* _tag, bool _useMutex)
         : tag(_tag), pc(USBTX, USBRX), useMutex(_useMutex)
     {}
-    int write(const char* format, ...) {
+
+    Log2& write(const char* format, ...) {
         if (this->useMutex) {
             this->mutex.lock();
         }
@@ -51,14 +65,26 @@ public:
         va_start(ap, format);
 
         pc.printf("[%s] ", tag);
-        int size = pc.vprintf(format, ap);
+        pc.vprintf(format, ap);
         pc.putc('\n');
         va_end(ap);
         if (this->useMutex) {
             this->mutex.unlock();
         }
 
-        return size;
+        return *this;
+    }
+
+    Log2& newline() {
+        if (this->useMutex) {
+            this->mutex.lock();
+        }
+        pc.putc('\n');
+        if (this->useMutex) {
+            this->mutex.unlock();
+        }
+
+        return *this;
     }
 private:
     const char *tag;
