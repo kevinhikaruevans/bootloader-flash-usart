@@ -1,0 +1,6 @@
+BUILD
+docs
+mbed-os
+GettingStarted.html
+.vscode/ipch
+.vscode/.cortex*
