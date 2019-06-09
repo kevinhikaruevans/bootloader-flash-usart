@@ -47,11 +47,22 @@ void USARTBootloader::handleReadoutUnprotect() {
     
     size_t s;
     uint8_t ack2 = this->usart_getc(s);
+    usart.enable_input(false);
 
     if (ack2 == ACK) {
         logger.write("\trecv'd second ack!");
 
-        usart_writeBootloaderCommand(WriteUnprotect);
+        lastCommandSent = -1;
+        logger.write("\tsleeping before sending WriteProtect");
+        resetCount++;
+        wait_ms(500);
+        usart.set_blocking(false);
+        this->usart_putc(MagicKey);
+        usart.enable_input(true);
+        usart.set_blocking(true);
+
+        size_t tmp;
+
     } else {
         logger.write("<!> no second ack for 0x92");
         sendCallback(TargetNotFlashed, "missing second ACK from 0x92");

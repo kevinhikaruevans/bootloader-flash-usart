@@ -17,16 +17,27 @@ typedef enum BootloaderCommand_t {
 } BootloaderCommand;
 
 typedef enum BootloaderCommandIndex_t {
+    // 0x00
     Get,
+    // 0x01
     GetVersionAndRPS,
+    // 0x02
     GetID,
+    // 0x11
     ReadMemory,
+    // 0x21
     Go,
+    // 0x31
     WriteMemory,
+    // 0x43 or 0x44
     EraseMemory,
+    // 0x63
     WriteProtect,
+    // 0x73
     WriteUnprotect,
+    // 0x82
     ReadoutProtect,
+    // 0x92
     ReadoutUnprotect
 } BootloaderCommandIndex;
 
@@ -68,6 +79,8 @@ private:
 
     int resetCount;
 
+    int estQueuedItems;
+
     void sendCallback(const BootloaderCompletionStatus status, const char* message) {
         if (this->cbComplete) {
             BootloaderCompletionState state = {
@@ -105,7 +118,8 @@ private:
 
 public:
     USARTBootloader(PinName _boot0, PinName _nrst, PinName _tx, PinName _rx)
-        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE), boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE), resetCount(0)
+        : logger("USARTBootloader"), lastCommandSent(-1), queue(32 * EVENTS_EVENT_SIZE), boot0(_boot0), nrst(_nrst), usart(_tx, _rx, USART_BAUDRATE), resetCount(0),
+        estQueuedItems(0)
           
     {
         logger.write("Initializing...");
@@ -116,6 +130,7 @@ public:
          */
         usart.set_format(8, UARTSerial::Even, 1);
         usart.set_blocking(true);
+        usart.enable_input(false);
         usart.sigio(callback(this, &USARTBootloader::handleIOEvent));
 
         this->eventThread.start(
@@ -156,7 +171,10 @@ public:
 
         if (this->resetSlave()) {
             logger.write("reset=OK, starting bootloader sequence");
+            usart.set_blocking(false);
             this->usart_putc(MagicKey);
+            usart.enable_input(true);
+            usart.set_blocking(true);
             logger.write("should be within bootloader now");
         } else {
             logger.write("reset=fail");
@@ -183,8 +201,8 @@ public:
         this->nrst.write(0);
         wait_ms(1);
         this->nrst.write(1);
-        wait_ms(DEVICE_RESET_WAIT_MS);
         logger.write("reset #%d done!", ++this->resetCount);
+        wait_ms(DEVICE_RESET_WAIT_MS);
 
         return true;
     }
@@ -196,6 +214,7 @@ public:
         
         if (current_events & POLLIN) {
             // https://github.com/ARMmbed/mbed-os/blob/master/drivers/UARTSerial.cpp#L126
+            estQueuedItems++;
             queue.call(callback(this, &USARTBootloader::handleQueueEvent));
         }
     }
@@ -204,15 +223,14 @@ public:
         size_t size;
         uint8_t cmd = usart_getc(size);
 
-        if (cmd == 0x00 || cmd == 0xC0 || this->resetCount == 0) {
+        if (cmd == 0x00 || cmd == 0xC0 || this->resetCount == 0 || cmd == 0xFF) {
             // usually a parity bit error, but the underlying class doesn't detect it
-            logger.write("invalid packet (%X); discarding...", cmd);
+            logger.write("invalid packet (%X)", cmd);
             /*
                 was prev doing if cmd == 0x00 || cmd == 0xc0
                 then just do uart_getc again and check that...
                 need more elegant way to do this
             */
-            return;
         }
         
         switch(cmd) {
@@ -226,8 +244,13 @@ public:
                 break;
             default:
                 logger.write("<!> invalid command: %x", cmd);
+                break;
         }
         
+        if (--estQueuedItems == 0 && (this->usart.poll(0) & 1)) {
+
+            queue.call(callback(this, &USARTBootloader::handleQueueEvent));
+        }
     }
 
     
@@ -318,7 +341,7 @@ public:
                 logger.write("\twrite protect? acked?=%x\n", this->usart_getc(s));
             }
             break;
-        }        
+        }
     }
 };
 
