@@ -1,36 +1,71 @@
 #include "usartbootloader.h"
 
-
-uint8_t* addr2arr(uint32_t address, uint8_t arr[5]) {
+/**
+ * Converts a 32-bit address to an uint8_t array with a checksum byte.
+ * 
+ * Returns the address to that array.
+ */
+uint8_t* addr2arrcs(uint32_t address, uint8_t arr[5]) {
     arr[0] = (uint8_t) ((address >> 24) & 0xFF);
     arr[1] = (uint8_t) ((address >> 16) & 0xFF);
     arr[2] = (uint8_t) ((address >> 8) & 0xFF);
     arr[3] = (uint8_t) ((address >> 0) & 0xFF);
     arr[4] = arr[0] ^ arr[1] ^ arr[2] ^ arr[3];
+
     return arr;
 }
-
-void USARTBootloader::test() {
-    logger.write("test");
+bool USARTBootloader::readFlashRegister32(const uint16_t offset, uint32_t &out) {
+    logger.write("Reading flash register, offset@%X", offset);
 
     usart_writeBootloaderCommand(ReadMemory);
 
-    uint8_t ack = usart_getc();
-    logger.write("ack = %X\n", ack);
+    uint32_t startAddress = STM32L4X6_FLASH_BANK1_REG_BASEADDR + offset;
+    uint8_t data[5], ack = NACK;
 
-    uint32_t startAddress = STM32L4X6_FLASH_BANK1_ADDR_START + 0x10;
-    uint8_t data[5];
-
-    addr2arr(startAddress, data);
-    logger.write("\tread address=%X", startAddress);
-
-    for(uint8_t i = 0; i < 5; i++) {
-        logger.write("\t\t[%d]=%X", i, data[i]);
+    ack = usart_getc();
+    if (ack != ACK) {
+        logger.write("did not receive ACK after read mem command");
+        return false;
     }
 
+    // write address and ack:
+    addr2arrcs(startAddress, data);
     usart.write(data, 5);
+    
     ack = usart_getc();
-    logger.write("ack = %X\n", ack);
+    if (ack != ACK) {
+        logger.write("did not receive ACK after writing address");
+        return false;
+    }
+
+    // write N-1 bytes to read and ack:
+    data[0] = 3; // N-1
+    data[1] = 0xFF ^ 3;
+    usart.write(data, 2);
+
+    ack = usart_getc();
+    if (ack != ACK) {
+        logger.write("did not receive ACK after writing size");
+        return false;
+    }
+
+    /*
+        endian needs to be flipped:
+            offset@0 => data=FFEFF8AA [AA, F8, EF, FF]
+            production value = 0xFFEF F8AA
+        base addr needs to be corrected
+    */
+    usart.read(data, 4);
+    memcpy(&out, data, 4);
+
+    logger.write("\t\toffset@%X => data=%X [%X, %X, %X, %X]", offset, out, data[0], data[1], data[2], data[3]);
+    return true;
+}
+void USARTBootloader::test() {
+    uint32_t value;
+    readFlashRegister32(0x00 /* FLASH_ACR */, value);
+    readFlashRegister32(0x10 /* FLASH_SR */, value);
+    
 
 }
 void USARTBootloader::sendCallback(const BootloaderCompletionStatus status, const char* message) {

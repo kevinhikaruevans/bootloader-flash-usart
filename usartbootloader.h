@@ -10,6 +10,7 @@
 #define STM32L4X6_FLASH_BANK2_ADDR_START 0x08080000
 #define STM32L4X6_FLASH_BANK2_ADDR_END 0x080FFFFF
 
+#define STM32L4X6_FLASH_BANK1_REG_BASEADDR 0x1FFF7800
 /**
  * It should be at least 500ms.
  * Not sure if there is a duration in the documentation, but from testing,
@@ -120,6 +121,9 @@ private:
     } DeviceInformation;
 
     DeviceInformation deviceInformation;
+
+    
+    bool readFlashRegister32(const uint16_t offset, uint32_t &out);
 
     void sendCallback(const BootloaderCompletionStatus status, const char* message);
     void initializeCommandHandlers();
