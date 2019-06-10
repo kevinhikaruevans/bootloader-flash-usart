@@ -2,6 +2,13 @@
 #define USARTBOOTLOADER_H
 
 #define DEVICE_USART_BAUDRATE 19200
+#define DEVICE_INVALID_VERSION 0xFF
+
+#define STM32L4X6_FLASH_BANK1_ADDR_START 0x08000000
+#define STM32L4X6_FLASH_BANK1_ADDR_END   0x0807FFFF
+
+#define STM32L4X6_FLASH_BANK2_ADDR_START 0x08080000
+#define STM32L4X6_FLASH_BANK2_ADDR_END 0x080FFFFF
 
 /**
  * It should be at least 500ms.
@@ -80,6 +87,9 @@ private:
     mbed::DigitalInOut nrst;
     mbed::UARTSerial usart;
     
+    /**
+     * TODO
+     */
     const char* targetFilename;
 
     /**
@@ -102,10 +112,14 @@ private:
     CommandHandler commandHandlers[DEVICE_BOOTLOADER_COMMANDS_LENGTH];
 
     /**
-     * Number of times the device has been reset.
+     * Container for holding information about the device.
      */
-    int resetCount;
+    typedef struct DeviceInformation_t {
+        uint8_t bootloaderVersion;
+        uint8_t resetCount;
+    } DeviceInformation;
 
+    DeviceInformation deviceInformation;
 
     void sendCallback(const BootloaderCompletionStatus status, const char* message);
     void initializeCommandHandlers();
@@ -126,14 +140,17 @@ private:
     void destroy();
     void handleReadRequested();
 
+    void test();
 public:
     USARTBootloader(PinName _boot0, PinName _nrst, PinName _tx, PinName _rx)
         : logger("USARTBootloader"), lastCommandSent(NoLastCommand), queue(32 * EVENTS_EVENT_SIZE),
-          boot0(_boot0), nrst(_nrst), usart(_tx, _rx, DEVICE_USART_BAUDRATE),
-          resetCount(0)
+          boot0(_boot0), nrst(_nrst), usart(_tx, _rx, DEVICE_USART_BAUDRATE)
     {
         logger.newline().write("initializing...");
         initializeCommandHandlers();
+
+        deviceInformation.bootloaderVersion = DEVICE_INVALID_VERSION;
+        deviceInformation.resetCount = 0;
 
         /*
          * The format is 8 bits, even parity, and stop=1
@@ -207,7 +224,7 @@ public:
         this->nrst.write(0);
         wait_ms(1);
         this->nrst.write(1);
-        logger.write("reset #%d done!", ++this->resetCount);
+        logger.write("reset #%d done!", ++this->deviceInformation.resetCount);
         wait_ms(DEVICE_RESET_WAIT_MS);
 
         return true;
@@ -274,9 +291,13 @@ public:
         if (lastCommandSent == NoLastCommand) {
             logger.write("\thandshake: OK");
 
-            if (resetCount > 1) {
-                logger.write("\thalting until I get this figured out");
+            if (deviceInformation.resetCount > 1) {
+                logger.write("\tnon-first reboot -> going to attempt an erase");
+                
+                test();
             } else {
+                logger.write("\tfirst reboot -> requesting Get...");
+                
                 usart_writeBootloaderCommand(Get);
             }
 
