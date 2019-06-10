@@ -294,10 +294,11 @@ public:
             if (deviceInformation.resetCount > 1) {
                 logger.write("\tnon-first reboot -> going to attempt an erase");
                 
+                //usart_writeBootloaderCommand(BootloaderCommandIndex_t::WriteUnprotect)
                 test();
             } else {
                 logger.write("\tfirst reboot -> requesting Get...");
-                
+
                 usart_writeBootloaderCommand(Get);
             }
 

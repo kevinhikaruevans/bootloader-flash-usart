@@ -1,7 +1,34 @@
 #include "usartbootloader.h"
 
+
+uint8_t* addr2arr(uint32_t address, uint8_t arr[5]) {
+    uint8_t checksum = 0;
+    for(uint8_t b = 0; b < 4; b++) {
+        arr[b] = ((0xFF << (b * 8)) & address) >> (8 * b);
+        checksum ^= b;
+    }
+    arr[4] = checksum;
+    return arr;
+}
+
 void USARTBootloader::test() {
     logger.write("test");
+
+    usart_writeBootloaderCommand(ReadMemory);
+
+    uint8_t ack = usart_getc();
+    logger.write("ack = %X\n", ack);
+
+    uint32_t startAddress = STM32L4X6_FLASH_BANK1_ADDR_START + 0x10;
+    uint8_t data[5];
+
+    addr2arr(startAddress, data);
+    for(uint8_t i = 0; i < 5; i++) {
+        logger.write("[%d]=%X", i, data[i]);
+    }
+
+
+
 }
 void USARTBootloader::sendCallback(const BootloaderCompletionStatus status, const char* message) {
     if (this->cbComplete) {
@@ -88,14 +115,16 @@ void USARTBootloader::handleReadRequested() {
 
         default:
             logger.write("<!> invalid command: %x", cmd);
-            
-            if (!queue.has_next() && (this->usart.poll(0) & 1)) {
-                logger.write("\t-> there seems to be more in the rxfifo and an empty equeue");
-                logger.write("\t\t-> will re-enqueue another check");
-
-                queue.call(callback(this, &USARTBootloader::handleReadRequested));
-            }
             break;
+    }
+
+    if (!queue.has_next() && (this->usart.poll(0) & 1)) {
+        logger.write(">> there seems to be more in the rxfifo and an empty equeue");
+        logger.write("\t-> this is OK if the device just reset and it's reading garbage");
+        logger.write("\t-> will re-enqueue another check");
+        logger.write("<<");
+        
+        queue.call(callback(this, &USARTBootloader::handleReadRequested));
     }
 }
 
@@ -186,12 +215,11 @@ void USARTBootloader::handleReadoutUnprotect() {
 
     if (ack2 == ACK) {
         logger.write("\trecv'd second ack!");
-
-        lastCommandSent = -1;
         logger.write("\tsleeping before sending WriteProtect");
         deviceInformation.resetCount++;
         wait_ms(DEVICE_RESET_WAIT_MS);
 
+        lastCommandSent = NoLastCommand;
         this->usart_putc(MagicKey);
     } else {
         logger.write("<!> no second ack for 0x92");
