@@ -2,12 +2,11 @@
 
 
 uint8_t* addr2arr(uint32_t address, uint8_t arr[5]) {
-    uint8_t checksum = 0;
-    for(uint8_t b = 0; b < 4; b++) {
-        arr[b] = ((0xFF << (b * 8)) & address) >> (8 * b);
-        checksum ^= b;
-    }
-    arr[4] = checksum;
+    arr[0] = (uint8_t) ((address >> 24) & 0xFF);
+    arr[1] = (uint8_t) ((address >> 16) & 0xFF);
+    arr[2] = (uint8_t) ((address >> 8) & 0xFF);
+    arr[3] = (uint8_t) ((address >> 0) & 0xFF);
+    arr[4] = arr[0] ^ arr[1] ^ arr[2] ^ arr[3];
     return arr;
 }
 
@@ -23,11 +22,15 @@ void USARTBootloader::test() {
     uint8_t data[5];
 
     addr2arr(startAddress, data);
+    logger.write("\tread address=%X", startAddress);
+
     for(uint8_t i = 0; i < 5; i++) {
-        logger.write("[%d]=%X", i, data[i]);
+        logger.write("\t\t[%d]=%X", i, data[i]);
     }
 
-
+    usart.write(data, 5);
+    ack = usart_getc();
+    logger.write("ack = %X\n", ack);
 
 }
 void USARTBootloader::sendCallback(const BootloaderCompletionStatus status, const char* message) {
@@ -123,7 +126,7 @@ void USARTBootloader::handleReadRequested() {
         logger.write("\t-> this is OK if the device just reset and it's reading garbage");
         logger.write("\t-> will re-enqueue another check");
         logger.write("<<");
-        
+
         queue.call(callback(this, &USARTBootloader::handleReadRequested));
     }
 }
