@@ -14,14 +14,23 @@ uint8_t* addr2arrcs(uint32_t address, uint8_t arr[5]) {
 
     return arr;
 }
-bool USARTBootloader::readFlashRegister32(const uint16_t offset, uint32_t &out) {
-    logger.write("Reading flash register, offset@%X", offset);
+
+uint32_t arr2uint32(uint8_t arr[4]) {
+    // it's middle endian... tf
+    return (uint32_t) arr[1] << 24
+        | (uint32_t) arr[0] << 16
+        | (uint32_t) arr[3] << 8
+        | (uint32_t) arr[2];
+}
+
+bool USARTBootloader::readFlashRegister32(const uint32_t startAddress, uint32_t &out) {
+    logger.write("Reading flash register, address@%X", startAddress);
 
     usart_writeBootloaderCommand(ReadMemory);
 
-    uint32_t startAddress = STM32L4X6_FLASH_BANK1_REG_BASEADDR + offset;
+    //uint32_t startAddress = /*STM32L4X6_FLASH_BANK1_REG_BASEADDR +*/ offset;
     uint8_t data[5], ack = NACK;
-
+    
     ack = usart_getc();
     if (ack != ACK) {
         logger.write("did not receive ACK after read mem command");
@@ -49,24 +58,24 @@ bool USARTBootloader::readFlashRegister32(const uint16_t offset, uint32_t &out) 
         return false;
     }
 
-    /*
-        endian needs to be flipped:
-            offset@0 => data=FFEFF8AA [AA, F8, EF, FF]
-            production value = 0xFFEF F8AA
-        base addr needs to be corrected
-    */
     usart.read(data, 4);
-    memcpy(&out, data, 4);
+    //usart.read(&block, 4);
+    //memcpy(&out, data, 4);// wrong endian
+    out = arr2uint32(data);
 
-    logger.write("\t\toffset@%X => data=%X [%X, %X, %X, %X]", offset, out, data[0], data[1], data[2], data[3]);
+    logger.write("\t\t@%X => data=%X [%X, %X, %X, %X]", startAddress, out, data[0], data[1], data[2], data[3]);
     return true;
 }
 void USARTBootloader::test() {
     uint32_t value;
-    readFlashRegister32(0x00 /* FLASH_ACR */, value);
-    readFlashRegister32(0x10 /* FLASH_SR */, value);
-    
 
+    // this successfully reads the first few bits of the current program that I compiled on the slave device:
+    // :)
+    readFlashRegister32(STM32L4X6_FLASH_BANK1_ADDR_START + 0x00, value);
+    readFlashRegister32(STM32L4X6_FLASH_BANK1_ADDR_START + 0x04, value);
+    readFlashRegister32(STM32L4X6_FLASH_BANK1_ADDR_START + 0x08, value);
+
+    //8000 1000 352d 0800 3561 0800 026d 0800
 }
 void USARTBootloader::sendCallback(const BootloaderCompletionStatus status, const char* message) {
     if (this->cbComplete) {
