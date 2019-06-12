@@ -23,6 +23,7 @@
  */  
 #define DEVICE_BOOTLOADER_COMMANDS_LENGTH 11
 
+#include <cstdio>
 #include "mbed.h"
 #include "EventQueue2.h"
 #include "Log2.h"
@@ -294,11 +295,15 @@ public:
         if (lastCommandSent == NoLastCommand) {
             logger.write("\thandshake: OK");
 
-            if (deviceInformation.resetCount > 1) {
-                logger.write("\tnon-first reboot -> going to attempt an erase");
-                
-                //usart_writeBootloaderCommand(BootloaderCommandIndex_t::WriteUnprotect)
+            if (deviceInformation.resetCount > 2) {
+                logger.write("HMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
                 test();
+                //wait(osWaitForever);
+            }
+            else if (deviceInformation.resetCount > 1) {
+                // unsure if this is even needed?
+                usart_writeBootloaderCommand(WriteUnprotect);
+                //test();
             } else {
                 logger.write("\tfirst reboot -> requesting Get...");
 
@@ -316,6 +321,9 @@ public:
         );
 
         if (commandMapPtr == commandMap + DEVICE_BOOTLOADER_COMMANDS_LENGTH) {
+            // this doesn't work
+            // need to debug and see why it doesn't work :/
+            // may need a sizeof() in there somewhere
             logger.write("<!> no handler found for command %x!", lastCommandSent);
         } else {
             int commandIndex = commandMapPtr - commandMap;

@@ -5,7 +5,7 @@
 int main() {
     printf("starting!\n");
     /*wait(0.5);
-    init_io();
+    
     //format_disk();
     wait(0.5);
     print_dir();
@@ -23,6 +23,9 @@ int main() {
 
     printf("program found!\n");
 */
+    init_io();
+    print_dir();
+    wait(0.5);
     USARTBootloader slave(D7, D5, D1, D0);
 
     while(1) ;

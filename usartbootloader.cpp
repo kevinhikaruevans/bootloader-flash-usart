@@ -66,8 +66,11 @@ bool USARTBootloader::readFlashRegister32(const uint32_t startAddress, uint32_t 
     logger.write("\t\t@%X => data=%X [%X, %X, %X, %X]", startAddress, out, data[0], data[1], data[2], data[3]);
     return true;
 }
+
 void USARTBootloader::test() {
     uint32_t value;
+    
+    
 
     // this successfully reads the first few bits of the current program that I compiled on the slave device:
     // :)
@@ -76,6 +79,100 @@ void USARTBootloader::test() {
     readFlashRegister32(STM32L4X6_FLASH_BANK1_ADDR_START + 0x08, value);
 
     //8000 1000 352d 0800 3561 0800 026d 0800
+    //usart_writeBootloaderCommand(WriteUnprotect);
+
+
+    boot0.write(0); // rembmer to undo this
+    return;
+    FILE* file = fopen("/fat/slow.bin", "rb");
+
+    if (!file) {
+        logger.write("replacement program not found :(");
+        return;
+    }
+
+    uint8_t txBuffer[5];
+    uint8_t fileBuffer[256 + 2];
+    size_t bytesRead = 0;
+    uint8_t ack = NACK;
+
+    for(uint32_t offset = 0; offset < 100000 /* 100kB hard limit */; offset += 256) {
+        bytesRead = fread(fileBuffer + 1, 1, 256, file);
+
+        /*
+            if bytesRead == 1:
+            - fileBuffer = { 0, X, 0, ...}
+
+            fileBuffer[2] = fileBuffer[0] = 1 - 1 = 0 OK
+            
+            i = 0; i < 1; i++
+
+                i = 0 -> fileBuffer[2] ^= fileBuffer[1]
+
+        */
+        fileBuffer[1 + bytesRead] = fileBuffer[0] = (uint8_t)bytesRead - 1;
+
+        //logger.write("bytesRead = %d", bytesRead);
+        
+        for(uint16_t i = 0; i < bytesRead; i++) {
+            fileBuffer[1 + bytesRead] ^= fileBuffer[1 + i];
+        }
+
+        usart_writeBootloaderCommand(WriteMemory);
+        ack = usart_getc();
+
+        if (ack != ACK) {
+            logger.write("invalid cmd ack = %x", ack);
+            return;
+        }
+
+        addr2arrcs(STM32L4X6_FLASH_BANK1_ADDR_START + offset, txBuffer);
+        usart.write(txBuffer, 5);
+        ack = usart_getc();
+
+        if (ack != ACK) {
+            logger.write("invalid addr ack2 = %x", ack);
+            return;
+        }
+
+
+        usart.write(fileBuffer, 2 + bytesRead);
+        ack = usart_getc();
+
+        if (ack != ACK) {
+            logger.write("invalid addr ack3 = %x", ack);
+            return;
+        }
+        if (bytesRead < 256) {
+            logger.write("less than 256b read -> break");
+            break;
+        }
+    }
+    
+    logger.write("fin!");
+    fclose(file);
+
+    wait(osWaitForever);
+/*
+    uint8_t data[5];
+    uint8_t buffer[256 + 2];
+    size_t r = fread(buffer + 1, 1, 256, file);
+    
+
+    uint8_t ack = usart_getc();
+    logger.write("ack1 = %x", ack);
+
+    uint32_t address = STM32L4X6_FLASH_BANK1_ADDR_START;
+    // write address and ack:
+    addr2arrcs(address, data);
+    usart.write(data, 5);
+    buffer[256 + 1] = buffer[0] = 0xFF;
+    for(uint8_t i = 0; i < 255; i++) {
+        buffer[256 + 1] ^= buffer[1 + i];
+    }
+
+    ack = usart_getc();
+    logger.write("ack2 = %x", ack);*/
 }
 void USARTBootloader::sendCallback(const BootloaderCompletionStatus status, const char* message) {
     if (this->cbComplete) {
@@ -105,6 +202,7 @@ void USARTBootloader::initializeCommandHandlers() {
     commandHandlers[WriteMemory] = &USARTBootloader::handleWriteMemory;
     commandHandlers[EraseMemory] = &USARTBootloader::handleEraseMemory;
     commandHandlers[WriteProtect] = &USARTBootloader::handleWriteProtect;
+    commandHandlers[WriteUnprotect] = &USARTBootloader::handleWriteUnprotect;
     commandHandlers[ReadoutProtect] = &USARTBootloader::handleReadoutProtect;
     commandHandlers[ReadoutUnprotect] = &USARTBootloader::handleReadoutUnprotect;
 }
@@ -249,7 +347,23 @@ void USARTBootloader::handleWriteProtect() {
 }
 
 void USARTBootloader::handleWriteUnprotect() {
-    logger.write("\treceived write unprotect");
+    logger.write("\teceived first ack for write unprotect, waiting for ack after reset...");
+    uint8_t ack2 = this->usart_getc(); // this should be OK if it's blocking, right?
+
+    if (ack2 == ACK) {
+        logger.write("\trecv'd second ack!");
+        logger.write("\tsleeping before sending magic key!");
+        deviceInformation.resetCount++;
+        wait_ms(DEVICE_RESET_WAIT_MS);
+
+        lastCommandSent = NoLastCommand;
+        this->usart_putc(MagicKey);
+    } else {
+        logger.write("<!> no second ack for 0x92");
+        sendCallback(TargetNotFlashed, "missing second ACK from 0x92");
+    }
+    //test();
+
 }
 
 void USARTBootloader::handleReadoutProtect() {
